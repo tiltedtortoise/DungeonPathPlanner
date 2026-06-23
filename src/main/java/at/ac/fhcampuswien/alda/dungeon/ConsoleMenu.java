@@ -43,11 +43,11 @@ public class ConsoleMenu {
     private void printMenu() {
         System.out.println("=== Dungeon Path Planner ===");
         System.out.println("1. Show dungeon rooms and corridors");
-        System.out.println("2. Check if a room is reachable with DFS");
-        System.out.println("3. Show one path found by DFS");
-        System.out.println("4. Find cheapest path with Dijkstra");
-        System.out.println("5. Build cheapest full corridor network with Prim");
-        System.out.println("6. Explain selected data structure and algorithms");
+        System.out.println("2. DFS Reachability (Check if a room is reachable");
+        System.out.println("3. DFS Path (show one possible path)");
+        System.out.println("4. Dijkstra Path (find cheapest path)" );
+        System.out.println("5. Prim MST (build cheapest full network)");
+        System.out.println("6. Explain data structure and algorithms");
         System.out.println("0. Exit");
         System.out.print("Choose an option: ");
     }
@@ -129,6 +129,9 @@ public class ConsoleMenu {
     private void explainDataStructureAndAlgorithms() {
         System.out.println("""
                 === Beginner-Friendly Explanation ===
+
+                Console and JavaFX use the same DungeonGraph and GraphAlgorithms classes.
+                Only the user interface is different (typing room names vs. clicking rooms).
 
                 What is a graph in this application?
                 The dungeon is modeled as a graph. Each room is a node, and each corridor
