@@ -16,6 +16,10 @@ public class DemoDungeonFactory {
         graph.addRoom("Treasure Room");
         graph.addRoom("Boss Room");
         graph.addRoom("Exit");
+        graph.addRoom("Alchemy Lab");
+        graph.addRoom("Crypt");
+        graph.addRoom("Watchtower");
+        graph.addRoom("Hidden Shrine");
 
         graph.addCorridor("Entrance", "Guard Room", 4);
         graph.addCorridor("Entrance", "Library", 6);
@@ -28,6 +32,15 @@ public class DemoDungeonFactory {
         graph.addCorridor("Treasure Room", "Exit", 5);
         graph.addCorridor("Boss Room", "Exit", 2);
         graph.addCorridor("Prison Cell", "Exit", 9);
+
+        graph.addCorridor("Library", "Alchemy Lab", 2);
+        graph.addCorridor("Alchemy Lab", "Hidden Shrine", 7);
+        graph.addCorridor("Hidden Shrine", "Treasure Room", 4);
+        graph.addCorridor("Prison Cell", "Crypt", 3);
+        graph.addCorridor("Crypt", "Boss Room", 6);
+        graph.addCorridor("Guard Room", "Watchtower", 3);
+        graph.addCorridor("Watchtower", "Armory", 4);
+        graph.addCorridor("Watchtower", "Boss Room", 10);
 
         return graph;
     }
