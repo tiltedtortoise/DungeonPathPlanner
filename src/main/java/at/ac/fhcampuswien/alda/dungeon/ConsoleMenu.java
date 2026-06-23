@@ -27,11 +27,11 @@ public class ConsoleMenu {
                 case "4" -> findCheapestPathWithDijkstra();
                 case "5" -> buildMinimumSpanningTreeWithPrim();
                 case "6" -> explainDataStructureAndAlgorithms();
-                case "7" -> {
+                case "0" -> {
                     System.out.println("Goodbye!");
                     running = false;
                 }
-                default -> System.out.println("Invalid choice. Please enter a number from 1 to 7.");
+                default -> System.out.println("Invalid choice. Please enter a number from 0 to 6.");
             }
 
             if (running) {
@@ -48,7 +48,7 @@ public class ConsoleMenu {
         System.out.println("4. Find cheapest path with Dijkstra");
         System.out.println("5. Build cheapest full corridor network with Prim");
         System.out.println("6. Explain selected data structure and algorithms");
-        System.out.println("7. Exit");
+        System.out.println("0. Exit");
         System.out.print("Choose an option: ");
     }
 

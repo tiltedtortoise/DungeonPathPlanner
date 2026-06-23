@@ -181,6 +181,7 @@ public class GraphAlgorithms {
             visited.add(roomToAdd);
         }
 
-        return new MinimumSpanningTreeResult(chosenCorridors, totalCost);
+        boolean complete = visited.size() == graph.getRooms().size();
+        return new MinimumSpanningTreeResult(chosenCorridors, totalCost, complete);
     }
 }

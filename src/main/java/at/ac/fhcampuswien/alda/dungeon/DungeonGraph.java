@@ -46,6 +46,17 @@ public class DungeonGraph {
             throw new IllegalArgumentException("A corridor cannot connect a room to itself.");
         }
 
+        for (Corridor existing : allCorridors) {
+            Room existingA = existing.getRoomA();
+            Room existingB = existing.getRoomB();
+            boolean samePair = (existingA.equals(roomA) && existingB.equals(roomB))
+                    || (existingA.equals(roomB) && existingB.equals(roomA));
+            if (samePair) {
+                throw new IllegalArgumentException(
+                        "Corridor already exists between " + roomAName + " and " + roomBName);
+            }
+        }
+
         Corridor corridor = new Corridor(roomA, roomB, cost);
         allCorridors.add(corridor);
         adjacencyList.get(roomA).add(corridor);
