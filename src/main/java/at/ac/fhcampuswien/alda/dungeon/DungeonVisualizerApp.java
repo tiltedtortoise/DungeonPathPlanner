@@ -7,7 +7,10 @@ import javafx.scene.Cursor;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.TextInputDialog;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
@@ -23,9 +26,19 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 public class DungeonVisualizerApp extends Application {
+
+    private enum InteractionMode {
+        SELECT,
+        ADD_ROOM,
+        ADD_EDGE,
+        DELETE_ROOM,
+        DELETE_EDGE,
+        EDIT_COST
+    }
 
     private static final double ROOM_RADIUS = 22;
     private static final double GRAPH_WIDTH = 1100;
@@ -39,11 +52,16 @@ public class DungeonVisualizerApp extends Application {
     private static final Color START_ROOM_BORDER = Color.web("#1565c0");
     private static final Color TARGET_ROOM_FILL = Color.web("#e1bee7");
     private static final Color TARGET_ROOM_BORDER = Color.web("#7b1fa2");
+    private static final Color PENDING_ROOM_FILL = Color.web("#fff9c4");
 
     private DungeonGraph graph;
     private Pane graphPane;
     private TextArea outputArea;
+    private Label modeLabel;
     private Map<String, double[]> roomPositions;
+
+    private InteractionMode interactionMode = InteractionMode.SELECT;
+    private Room pendingFirstRoom;
 
     private Room selectedStartRoom;
     private Room selectedTargetRoom;
@@ -62,13 +80,37 @@ public class DungeonVisualizerApp extends Application {
         graphPane = new Pane();
         graphPane.setPrefSize(GRAPH_WIDTH, GRAPH_HEIGHT);
         graphPane.setStyle("-fx-background-color: #f5f5f5;");
+        graphPane.setOnMouseClicked(this::handlePaneClick);
 
         outputArea = new TextArea();
         outputArea.setEditable(false);
         outputArea.setWrapText(true);
-        outputArea.setPrefRowCount(8);
+        outputArea.setPrefRowCount(10);
 
-        Button resetButton = new Button("Reset");
+        modeLabel = new Label();
+        modeLabel.setStyle("-fx-font-weight: bold;");
+
+        Button selectModeButton = new Button("Select");
+        Button addRoomModeButton = new Button("Add Room");
+        Button addEdgeModeButton = new Button("Add Edge");
+        Button deleteRoomModeButton = new Button("Delete Room");
+        Button deleteEdgeModeButton = new Button("Delete Edge");
+        Button editCostModeButton = new Button("Edit Cost");
+
+        selectModeButton.setOnAction(event -> setInteractionMode(InteractionMode.SELECT));
+        addRoomModeButton.setOnAction(event -> setInteractionMode(InteractionMode.ADD_ROOM));
+        addEdgeModeButton.setOnAction(event -> setInteractionMode(InteractionMode.ADD_EDGE));
+        deleteRoomModeButton.setOnAction(event -> setInteractionMode(InteractionMode.DELETE_ROOM));
+        deleteEdgeModeButton.setOnAction(event -> setInteractionMode(InteractionMode.DELETE_EDGE));
+        editCostModeButton.setOnAction(event -> setInteractionMode(InteractionMode.EDIT_COST));
+
+        HBox modeBar = new HBox(8, modeLabel, selectModeButton, addRoomModeButton, addEdgeModeButton,
+                deleteRoomModeButton, deleteEdgeModeButton, editCostModeButton);
+        modeBar.setPadding(new Insets(10, 10, 0, 10));
+        modeBar.setAlignment(Pos.CENTER_LEFT);
+
+        Button resetButton = new Button("Reset View");
+        Button resetDungeonButton = new Button("Reset Dungeon");
         Button clearSelectionButton = new Button("Clear Selection");
         Button dfsReachabilityButton = new Button("DFS Reachability");
         Button dfsPathButton = new Button("DFS Path");
@@ -76,30 +118,34 @@ public class DungeonVisualizerApp extends Application {
         Button primMstButton = new Button("Prim MST");
 
         resetButton.setOnAction(event -> resetView());
+        resetDungeonButton.setOnAction(event -> resetDungeon());
         clearSelectionButton.setOnAction(event -> clearSelection());
         dfsReachabilityButton.setOnAction(event -> showDfsReachability());
         dfsPathButton.setOnAction(event -> showDfsPath());
         dijkstraPathButton.setOnAction(event -> showDijkstraPath());
         primMstButton.setOnAction(event -> showPrimMst());
 
-        HBox buttonBar = new HBox(10, resetButton, clearSelectionButton, dfsReachabilityButton,
-                dfsPathButton, dijkstraPathButton, primMstButton);
-        buttonBar.setPadding(new Insets(10));
-        buttonBar.setAlignment(Pos.CENTER_LEFT);
+        HBox actionBar = new HBox(10, resetButton, resetDungeonButton, clearSelectionButton,
+                dfsReachabilityButton, dfsPathButton, dijkstraPathButton, primMstButton);
+        actionBar.setPadding(new Insets(10));
+        actionBar.setAlignment(Pos.CENTER_LEFT);
+
+        VBox topBox = new VBox(modeBar, actionBar);
 
         VBox bottomBox = new VBox(5, outputArea);
         bottomBox.setPadding(new Insets(0, 10, 10, 10));
 
         BorderPane root = new BorderPane();
-        root.setTop(buttonBar);
+        root.setTop(topBox);
         root.setCenter(graphPane);
         root.setBottom(bottomBox);
 
-        Scene scene = new Scene(root, GRAPH_WIDTH, GRAPH_HEIGHT + 200);
+        Scene scene = new Scene(root, GRAPH_WIDTH, GRAPH_HEIGHT + 260);
         stage.setTitle("Dungeon Path Planner - Visualization");
         stage.setScene(scene);
         stage.show();
 
+        setInteractionMode(InteractionMode.SELECT);
         resetView();
     }
 
@@ -120,6 +166,28 @@ public class DungeonVisualizerApp extends Application {
         return positions;
     }
 
+    private void setInteractionMode(InteractionMode mode) {
+        interactionMode = mode;
+        pendingFirstRoom = null;
+        modeLabel.setText("Mode: " + mode.name());
+        updateModeHelpText();
+        redrawGraph();
+    }
+
+    private void updateModeHelpText() {
+        String help = switch (interactionMode) {
+            case SELECT -> "Click rooms to choose start and target for algorithms.\n"
+                    + "First click = start, second click = target.";
+            case ADD_ROOM -> "Click on an empty area in the graph to place a new room.";
+            case ADD_EDGE -> "Click two rooms to connect them. You will be asked for the corridor cost.";
+            case DELETE_ROOM -> "Click a room to delete it. Entrance and Exit cannot be deleted.";
+            case DELETE_EDGE -> "Click two rooms to delete the corridor between them.";
+            case EDIT_COST -> "Click a corridor cost label to change the weight.";
+        };
+
+        outputArea.setText(help + "\n\n" + formatSelectionLines());
+    }
+
     public Room getSelectedStartRoom() {
         return selectedStartRoom;
     }
@@ -133,8 +201,24 @@ public class DungeonVisualizerApp extends Application {
         selectedTargetRoom = null;
         algorithmHighlightedRooms.clear();
         algorithmHighlightedCorridors.clear();
-        updateSelectionText();
+        pendingFirstRoom = null;
+        updateModeHelpText();
         redrawGraph();
+    }
+
+    private void clearSelectionIfRoomRemoved(Room removedRoom) {
+        if (removedRoom == null) {
+            return;
+        }
+        if (removedRoom.equals(selectedStartRoom)) {
+            selectedStartRoom = null;
+        }
+        if (removedRoom.equals(selectedTargetRoom)) {
+            selectedTargetRoom = null;
+        }
+        if (removedRoom.equals(pendingFirstRoom)) {
+            pendingFirstRoom = null;
+        }
     }
 
     private boolean requireStartAndTarget() {
@@ -154,16 +238,6 @@ public class DungeonVisualizerApp extends Application {
         return true;
     }
 
-    private void updateSelectionText() {
-        outputArea.setText(
-                "This app uses a demo dungeon with multiple rooms and corridors.\n"
-                        + "Click on room circles to select start and target.\n"
-                        + "First click = start, second click = target.\n"
-                        + "If both are already selected, the next click starts a new selection.\n\n"
-                        + formatSelectionLines()
-        );
-    }
-
     private String formatSelectionLines() {
         return "Selected start room: " + formatRoomName(selectedStartRoom) + "\n"
                 + "Selected target room: " + formatRoomName(selectedTargetRoom);
@@ -176,7 +250,49 @@ public class DungeonVisualizerApp extends Application {
         return room.getName();
     }
 
+    private void handlePaneClick(MouseEvent event) {
+        if (interactionMode != InteractionMode.ADD_ROOM) {
+            return;
+        }
+
+        double x = event.getX();
+        double y = event.getY();
+
+        if (isPositionOnExistingRoom(x, y)) {
+            showMessage("Please click on an empty area, not on an existing room.");
+            return;
+        }
+
+        Optional<String> nameResult = promptText("Add Room", "Enter room name:", "");
+        if (nameResult.isEmpty() || nameResult.get().trim().isEmpty()) {
+            return;
+        }
+
+        String roomName = nameResult.get().trim();
+
+        try {
+            graph.addRoom(roomName);
+            roomPositions.put(roomName, new double[]{x, y});
+            showMessage("Room added: " + roomName);
+            redrawGraph();
+        } catch (IllegalArgumentException exception) {
+            showMessage(exception.getMessage());
+        }
+    }
+
     private void handleRoomClick(Room clickedRoom) {
+        switch (interactionMode) {
+            case SELECT -> handleSelectModeClick(clickedRoom);
+            case ADD_EDGE -> handleAddEdgeClick(clickedRoom);
+            case DELETE_ROOM -> handleDeleteRoomClick(clickedRoom);
+            case DELETE_EDGE -> handleDeleteEdgeClick(clickedRoom);
+            case ADD_ROOM, EDIT_COST -> {
+                // pane click or corridor click handles these modes
+            }
+        }
+    }
+
+    private void handleSelectModeClick(Room clickedRoom) {
         if (selectedStartRoom != null && selectedTargetRoom != null) {
             selectedStartRoom = clickedRoom;
             selectedTargetRoom = null;
@@ -186,8 +302,146 @@ public class DungeonVisualizerApp extends Application {
             selectedTargetRoom = clickedRoom;
         }
 
-        updateSelectionText();
+        updateModeHelpText();
         redrawGraph();
+    }
+
+    private void handleAddEdgeClick(Room clickedRoom) {
+        if (pendingFirstRoom == null) {
+            pendingFirstRoom = clickedRoom;
+            showMessage("First room selected: " + clickedRoom.getName()
+                    + "\nNow click the second room for the new corridor.");
+            redrawGraph();
+            return;
+        }
+
+        if (pendingFirstRoom.equals(clickedRoom)) {
+            showMessage("Please choose a different second room.");
+            return;
+        }
+
+        Optional<Integer> costResult = promptPositiveInt("Add Edge",
+                "Corridor cost between " + pendingFirstRoom.getName() + " and " + clickedRoom.getName() + ":",
+                "1");
+        if (costResult.isEmpty()) {
+            pendingFirstRoom = null;
+            redrawGraph();
+            return;
+        }
+
+        try {
+            graph.addCorridor(pendingFirstRoom.getName(), clickedRoom.getName(), costResult.get());
+            showMessage("Corridor added between " + pendingFirstRoom.getName()
+                    + " and " + clickedRoom.getName() + " with cost " + costResult.get() + ".");
+        } catch (IllegalArgumentException exception) {
+            showMessage(exception.getMessage());
+        }
+
+        pendingFirstRoom = null;
+        redrawGraph();
+    }
+
+    private void handleDeleteRoomClick(Room clickedRoom) {
+        try {
+            graph.removeRoom(clickedRoom.getName());
+            roomPositions.remove(clickedRoom.getName());
+            clearSelectionIfRoomRemoved(clickedRoom);
+            showMessage("Room deleted: " + clickedRoom.getName());
+            redrawGraph();
+        } catch (IllegalArgumentException exception) {
+            showMessage(exception.getMessage());
+        }
+    }
+
+    private void handleDeleteEdgeClick(Room clickedRoom) {
+        if (pendingFirstRoom == null) {
+            pendingFirstRoom = clickedRoom;
+            showMessage("First room selected: " + clickedRoom.getName()
+                    + "\nNow click the second room to delete the corridor between them.");
+            redrawGraph();
+            return;
+        }
+
+        if (pendingFirstRoom.equals(clickedRoom)) {
+            showMessage("Please choose a different second room.");
+            return;
+        }
+
+        try {
+            graph.removeCorridor(pendingFirstRoom.getName(), clickedRoom.getName());
+            showMessage("Corridor deleted between " + pendingFirstRoom.getName()
+                    + " and " + clickedRoom.getName() + ".");
+        } catch (IllegalArgumentException exception) {
+            showMessage(exception.getMessage());
+        }
+
+        pendingFirstRoom = null;
+        redrawGraph();
+    }
+
+    private void handleCorridorCostClick(Corridor corridor) {
+        if (interactionMode != InteractionMode.EDIT_COST) {
+            return;
+        }
+
+        Optional<Integer> costResult = promptPositiveInt("Edit Cost",
+                "New cost for corridor " + corridor.getRoomA().getName()
+                        + " <-> " + corridor.getRoomB().getName() + ":",
+                String.valueOf(corridor.getCost()));
+        if (costResult.isEmpty()) {
+            return;
+        }
+
+        try {
+            graph.setCorridorCost(corridor.getRoomA().getName(), corridor.getRoomB().getName(), costResult.get());
+            showMessage("Corridor cost updated to " + costResult.get() + ".");
+            redrawGraph();
+        } catch (IllegalArgumentException exception) {
+            showMessage(exception.getMessage());
+        }
+    }
+
+    private void showMessage(String message) {
+        outputArea.setText(message + "\n\n" + formatSelectionLines());
+    }
+
+    private Optional<String> promptText(String title, String header, String defaultValue) {
+        TextInputDialog dialog = new TextInputDialog(defaultValue);
+        dialog.setTitle(title);
+        dialog.setHeaderText(header);
+        dialog.setContentText("Value:");
+        return dialog.showAndWait();
+    }
+
+    private Optional<Integer> promptPositiveInt(String title, String header, String defaultValue) {
+        Optional<String> result = promptText(title, header, defaultValue);
+        if (result.isEmpty()) {
+            return Optional.empty();
+        }
+
+        try {
+            int value = Integer.parseInt(result.get().trim());
+            if (value <= 0) {
+                showMessage("Corridor cost must be a positive integer.");
+                return Optional.empty();
+            }
+            return Optional.of(value);
+        } catch (NumberFormatException exception) {
+            showMessage("Please enter a valid positive integer.");
+            return Optional.empty();
+        }
+    }
+
+    private boolean isPositionOnExistingRoom(double x, double y) {
+        for (Room room : graph.getRooms()) {
+            double[] position = getPosition(room);
+            double deltaX = x - position[0];
+            double deltaY = y - position[1];
+            if (deltaX * deltaX + deltaY * deltaY <= ROOM_RADIUS * ROOM_RADIUS) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void resetView() {
@@ -196,11 +450,28 @@ public class DungeonVisualizerApp extends Application {
         redrawGraph();
         outputArea.setText(
                 "Reset view.\n\n"
-                        + "This app uses a demo dungeon with multiple rooms and corridors.\n"
-                        + "Algorithm highlights were cleared. Selected start and target rooms are kept.\n"
-                        + "Click rooms to choose start and target, then run an algorithm.\n\n"
+                        + "Algorithm highlights were cleared. The dungeon itself was not changed.\n"
+                        + "Use Reset Dungeon to restore the original demo dungeon.\n\n"
                         + formatSelectionLines()
         );
+    }
+
+    private void resetDungeon() {
+        graph = DemoDungeonFactory.createDemoDungeon();
+        roomPositions = createRoomPositions();
+        selectedStartRoom = null;
+        selectedTargetRoom = null;
+        pendingFirstRoom = null;
+        algorithmHighlightedRooms.clear();
+        algorithmHighlightedCorridors.clear();
+        setInteractionMode(InteractionMode.SELECT);
+        outputArea.setText(
+                "Demo dungeon restored.\n\n"
+                        + "Entrance and Exit are protected and cannot be deleted.\n"
+                        + "You can add, delete, and edit other rooms and corridors.\n\n"
+                        + formatSelectionLines()
+        );
+        redrawGraph();
     }
 
     private void showDfsReachability() {
@@ -384,6 +655,10 @@ public class DungeonVisualizerApp extends Application {
         Line line = new Line(posA[0], posA[1], posB[0], posB[1]);
         line.setStroke(highlighted ? HIGHLIGHT_CORRIDOR_COLOR : DEFAULT_CORRIDOR_COLOR);
         line.setStrokeWidth(highlighted ? 4 : 2);
+        if (interactionMode == InteractionMode.EDIT_COST) {
+            line.setCursor(Cursor.HAND);
+            line.setOnMouseClicked(event -> handleCorridorCostClick(corridor));
+        }
         graphPane.getChildren().add(line);
     }
 
@@ -399,6 +674,10 @@ public class DungeonVisualizerApp extends Application {
         costLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
         costLabel.setX(midX - 6);
         costLabel.setY(midY - 6);
+        if (interactionMode == InteractionMode.EDIT_COST) {
+            costLabel.setCursor(Cursor.HAND);
+            costLabel.setOnMouseClicked(event -> handleCorridorCostClick(corridor));
+        }
         graphPane.getChildren().add(costLabel);
     }
 
@@ -406,6 +685,7 @@ public class DungeonVisualizerApp extends Application {
         double[] position = getPosition(room);
         boolean isStart = room.equals(selectedStartRoom);
         boolean isTarget = room.equals(selectedTargetRoom);
+        boolean isPending = room.equals(pendingFirstRoom);
 
         if (isStart) {
             Circle startRing = new Circle(position[0], position[1], ROOM_RADIUS + 6);
@@ -426,16 +706,20 @@ public class DungeonVisualizerApp extends Application {
         }
 
         Circle circle = new Circle(position[0], position[1], ROOM_RADIUS);
-        circle.setFill(getRoomFillColor(algorithmHighlighted, isStart, isTarget));
-        circle.setStroke(getRoomBorderColor(algorithmHighlighted, isStart, isTarget));
-        circle.setStrokeWidth(getRoomBorderWidth(algorithmHighlighted, isStart, isTarget));
+        circle.setFill(getRoomFillColor(algorithmHighlighted, isStart, isTarget, isPending));
+        circle.setStroke(getRoomBorderColor(algorithmHighlighted, isStart, isTarget, isPending));
+        circle.setStrokeWidth(getRoomBorderWidth(algorithmHighlighted, isStart, isTarget, isPending));
         addRoomClickHandler(room, circle);
         graphPane.getChildren().add(circle);
     }
 
-    private Color getRoomFillColor(boolean algorithmHighlighted, boolean isStart, boolean isTarget) {
+    private Color getRoomFillColor(boolean algorithmHighlighted, boolean isStart, boolean isTarget,
+                                   boolean isPending) {
         if (algorithmHighlighted) {
             return HIGHLIGHT_ROOM_FILL;
+        }
+        if (isPending) {
+            return PENDING_ROOM_FILL;
         }
         if (isStart) {
             return START_ROOM_FILL;
@@ -446,12 +730,16 @@ public class DungeonVisualizerApp extends Application {
         return DEFAULT_ROOM_FILL;
     }
 
-    private Color getRoomBorderColor(boolean algorithmHighlighted, boolean isStart, boolean isTarget) {
+    private Color getRoomBorderColor(boolean algorithmHighlighted, boolean isStart, boolean isTarget,
+                                     boolean isPending) {
         if (isStart) {
             return START_ROOM_BORDER;
         }
         if (isTarget) {
             return TARGET_ROOM_BORDER;
+        }
+        if (isPending) {
+            return Color.GOLD;
         }
         if (algorithmHighlighted) {
             return HIGHLIGHT_CORRIDOR_COLOR;
@@ -459,8 +747,9 @@ public class DungeonVisualizerApp extends Application {
         return Color.DARKBLUE;
     }
 
-    private double getRoomBorderWidth(boolean algorithmHighlighted, boolean isStart, boolean isTarget) {
-        if (isStart || isTarget) {
+    private double getRoomBorderWidth(boolean algorithmHighlighted, boolean isStart, boolean isTarget,
+                                      boolean isPending) {
+        if (isStart || isTarget || isPending) {
             return 3;
         }
         if (algorithmHighlighted) {
@@ -480,7 +769,10 @@ public class DungeonVisualizerApp extends Application {
     }
 
     private void addRoomClickHandler(Room room, Node node) {
-        node.setOnMouseClicked(event -> handleRoomClick(room));
+        node.setOnMouseClicked(event -> {
+            event.consume();
+            handleRoomClick(room);
+        });
         node.setCursor(Cursor.HAND);
     }
 
@@ -494,7 +786,9 @@ public class DungeonVisualizerApp extends Application {
     private double[] getPosition(Room room) {
         double[] position = roomPositions.get(room.getName());
         if (position == null) {
-            return new double[]{0, 0};
+            double[] defaultPosition = {GRAPH_WIDTH / 2.0, GRAPH_HEIGHT / 2.0};
+            roomPositions.put(room.getName(), defaultPosition);
+            return defaultPosition;
         }
         return position;
     }

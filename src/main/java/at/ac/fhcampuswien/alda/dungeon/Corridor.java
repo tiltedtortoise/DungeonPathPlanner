@@ -4,7 +4,7 @@ public class Corridor {
 
     private final Room roomA;
     private final Room roomB;
-    private final int cost;
+    private int cost;
 
     public Corridor(Room roomA, Room roomB, int cost) {
         this.roomA = roomA;
@@ -22,6 +22,10 @@ public class Corridor {
 
     public int getCost() {
         return cost;
+    }
+
+    public void setCost(int cost) {
+        this.cost = cost;
     }
 
     public Room getOtherRoom(Room room) {
