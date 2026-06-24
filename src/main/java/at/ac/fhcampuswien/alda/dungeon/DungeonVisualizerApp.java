@@ -9,7 +9,11 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.ToggleButton;
+import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -41,8 +45,11 @@ public class DungeonVisualizerApp extends Application {
     }
 
     private static final double ROOM_RADIUS = 22;
-    private static final double GRAPH_WIDTH = 1100;
-    private static final double GRAPH_HEIGHT = 580;
+    private static final double VIEWPORT_WIDTH = 1100;
+    private static final double VIEWPORT_HEIGHT = 580;
+    private static final double CANVAS_WIDTH = 1920;
+    private static final double CANVAS_HEIGHT = 1080;
+    private static final double CLICK_DRAG_THRESHOLD = 5;
 
     private static final Color DEFAULT_CORRIDOR_COLOR = Color.GRAY;
     private static final Color HIGHLIGHT_CORRIDOR_COLOR = Color.ORANGERED;
@@ -68,6 +75,16 @@ public class DungeonVisualizerApp extends Application {
     private final Set<Room> algorithmHighlightedRooms = new HashSet<>();
     private final Set<Corridor> algorithmHighlightedCorridors = new HashSet<>();
 
+    private double interactionPressX;
+    private double interactionPressY;
+
+    private ToggleButton selectModeButton;
+    private ToggleButton addRoomModeButton;
+    private ToggleButton addEdgeModeButton;
+    private ToggleButton deleteRoomModeButton;
+    private ToggleButton deleteEdgeModeButton;
+    private ToggleButton editCostModeButton;
+
     public static void main(String[] args) {
         launch(args);
     }
@@ -78,9 +95,25 @@ public class DungeonVisualizerApp extends Application {
         roomPositions = createRoomPositions();
 
         graphPane = new Pane();
-        graphPane.setPrefSize(GRAPH_WIDTH, GRAPH_HEIGHT);
+        graphPane.setMinSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+        graphPane.setPrefSize(CANVAS_WIDTH, CANVAS_HEIGHT);
         graphPane.setStyle("-fx-background-color: #f5f5f5;");
-        graphPane.setOnMouseClicked(this::handlePaneClick);
+        graphPane.setOnMousePressed(this::recordInteractionPress);
+        graphPane.setOnMouseClicked(event -> {
+            if (isSimpleClick(event)) {
+                handlePaneClick(event);
+            }
+        });
+
+        ScrollPane scrollPane = new ScrollPane(graphPane);
+        scrollPane.setPannable(true);
+        scrollPane.setFitToWidth(false);
+        scrollPane.setFitToHeight(false);
+        scrollPane.setPrefViewportWidth(VIEWPORT_WIDTH);
+        scrollPane.setPrefViewportHeight(VIEWPORT_HEIGHT);
+        scrollPane.setStyle("-fx-background-color: #c8c8c8;");
+        scrollPane.viewportBoundsProperty().addListener(
+                (observable, oldBounds, newBounds) -> updateGraphPaneSize(scrollPane));
 
         outputArea = new TextArea();
         outputArea.setEditable(false);
@@ -90,12 +123,20 @@ public class DungeonVisualizerApp extends Application {
         modeLabel = new Label();
         modeLabel.setStyle("-fx-font-weight: bold;");
 
-        Button selectModeButton = new Button("Select");
-        Button addRoomModeButton = new Button("Add Room");
-        Button addEdgeModeButton = new Button("Add Edge");
-        Button deleteRoomModeButton = new Button("Delete Room");
-        Button deleteEdgeModeButton = new Button("Delete Edge");
-        Button editCostModeButton = new Button("Edit Cost");
+        ToggleGroup modeGroup = new ToggleGroup();
+
+        selectModeButton = createModeToggleButton(modeGroup, "Select",
+                "Choose start and target rooms for the graph algorithms.");
+        addRoomModeButton = createModeToggleButton(modeGroup, "Add Room",
+                "Click empty space on the graph to place a new room.");
+        addEdgeModeButton = createModeToggleButton(modeGroup, "Add Edge",
+                "Click two rooms, then enter the corridor cost.");
+        deleteRoomModeButton = createModeToggleButton(modeGroup, "Delete Room",
+                "Click a room to delete it. Entrance and Exit are protected.");
+        deleteEdgeModeButton = createModeToggleButton(modeGroup, "Delete Edge",
+                "Click two rooms to remove the corridor between them.");
+        editCostModeButton = createModeToggleButton(modeGroup, "Edit Weight",
+                "Click a corridor cost label to change its weight.");
 
         selectModeButton.setOnAction(event -> setInteractionMode(InteractionMode.SELECT));
         addRoomModeButton.setOnAction(event -> setInteractionMode(InteractionMode.ADD_ROOM));
@@ -104,49 +145,115 @@ public class DungeonVisualizerApp extends Application {
         deleteEdgeModeButton.setOnAction(event -> setInteractionMode(InteractionMode.DELETE_EDGE));
         editCostModeButton.setOnAction(event -> setInteractionMode(InteractionMode.EDIT_COST));
 
-        HBox modeBar = new HBox(8, modeLabel, selectModeButton, addRoomModeButton, addEdgeModeButton,
-                deleteRoomModeButton, deleteEdgeModeButton, editCostModeButton);
-        modeBar.setPadding(new Insets(10, 10, 0, 10));
-        modeBar.setAlignment(Pos.CENTER_LEFT);
+        Label graphLabel = createGroupLabel("Graph:");
+        HBox graphBar = new HBox(8, graphLabel, modeLabel, selectModeButton, addRoomModeButton,
+                addEdgeModeButton, deleteRoomModeButton, deleteEdgeModeButton, editCostModeButton);
+        graphBar.setPadding(new Insets(10, 10, 0, 10));
+        graphBar.setAlignment(Pos.CENTER_LEFT);
 
-        Button resetButton = new Button("Reset View");
-        Button resetDungeonButton = new Button("Reset Dungeon");
-        Button clearSelectionButton = new Button("Clear Selection");
-        Button dfsReachabilityButton = new Button("DFS Reachability");
-        Button dfsPathButton = new Button("DFS Path");
-        Button dijkstraPathButton = new Button("Dijkstra Path");
-        Button primMstButton = new Button("Prim MST");
+        Button clearHighlightsButton = createButton("Clear Highlights",
+                "Remove algorithm path highlighting from the graph.");
+        Button restoreDemoButton = createButton("Restore Demo",
+                "Reset the dungeon to the original demo graph.");
+        Button clearSelectionButton = createButton("Clear Selection",
+                "Clear the selected start and target rooms.");
+        Button dfsReachabilityButton = createButton("DFS Reachability",
+                "Check if the target is reachable from the start using DFS.");
+        Button dfsPathButton = createButton("DFS Path",
+                "Find one path with DFS. It is not necessarily the cheapest path.");
+        Button dijkstraPathButton = createButton("Dijkstra",
+                "Find the cheapest path between the selected start and target.");
+        Button primMstButton = createButton("Prim MST",
+                "Build the minimum spanning tree from the selected start room.");
 
-        resetButton.setOnAction(event -> resetView());
-        resetDungeonButton.setOnAction(event -> resetDungeon());
+        clearHighlightsButton.setOnAction(event -> resetView());
+        restoreDemoButton.setOnAction(event -> resetDungeon());
         clearSelectionButton.setOnAction(event -> clearSelection());
         dfsReachabilityButton.setOnAction(event -> showDfsReachability());
         dfsPathButton.setOnAction(event -> showDfsPath());
         dijkstraPathButton.setOnAction(event -> showDijkstraPath());
         primMstButton.setOnAction(event -> showPrimMst());
 
-        HBox actionBar = new HBox(10, resetButton, resetDungeonButton, clearSelectionButton,
-                dfsReachabilityButton, dfsPathButton, dijkstraPathButton, primMstButton);
-        actionBar.setPadding(new Insets(10));
-        actionBar.setAlignment(Pos.CENTER_LEFT);
+        Label viewLabel = createGroupLabel("View:");
+        HBox viewBar = new HBox(10, viewLabel, clearHighlightsButton, restoreDemoButton, clearSelectionButton);
+        viewBar.setPadding(new Insets(6, 10, 0, 10));
+        viewBar.setAlignment(Pos.CENTER_LEFT);
 
-        VBox topBox = new VBox(modeBar, actionBar);
+        Label algorithmsLabel = createGroupLabel("Algorithms:");
+        HBox algorithmsBar = new HBox(10, algorithmsLabel, dfsReachabilityButton, dfsPathButton,
+                dijkstraPathButton, primMstButton);
+        algorithmsBar.setPadding(new Insets(10));
+        algorithmsBar.setAlignment(Pos.CENTER_LEFT);
+
+        VBox topBox = new VBox(graphBar, viewBar, algorithmsBar);
 
         VBox bottomBox = new VBox(5, outputArea);
         bottomBox.setPadding(new Insets(0, 10, 10, 10));
 
         BorderPane root = new BorderPane();
         root.setTop(topBox);
-        root.setCenter(graphPane);
+        root.setCenter(scrollPane);
         root.setBottom(bottomBox);
 
-        Scene scene = new Scene(root, GRAPH_WIDTH, GRAPH_HEIGHT + 260);
+        Scene scene = new Scene(root, VIEWPORT_WIDTH, VIEWPORT_HEIGHT + 300);
         stage.setTitle("Dungeon Path Planner - Visualization");
         stage.setScene(scene);
         stage.show();
 
+        updateGraphPaneSize(scrollPane);
         setInteractionMode(InteractionMode.SELECT);
         resetView();
+    }
+
+    private Label createGroupLabel(String text) {
+        Label label = new Label(text);
+        label.setStyle("-fx-font-weight: bold;");
+        return label;
+    }
+
+    private Button createButton(String text, String tooltipText) {
+        Button button = new Button(text);
+        installTooltip(button, tooltipText);
+        return button;
+    }
+
+    private ToggleButton createModeToggleButton(ToggleGroup group, String text, String tooltipText) {
+        ToggleButton button = new ToggleButton(text);
+        button.setToggleGroup(group);
+        installTooltip(button, tooltipText);
+        return button;
+    }
+
+    private void installTooltip(Node node, String text) {
+        Tooltip tooltip = new Tooltip(text);
+        tooltip.setWrapText(true);
+        tooltip.setMaxWidth(300);
+        Tooltip.install(node, tooltip);
+    }
+
+    private void recordInteractionPress(MouseEvent event) {
+        interactionPressX = event.getSceneX();
+        interactionPressY = event.getSceneY();
+    }
+
+    private boolean isSimpleClick(MouseEvent event) {
+        double deltaX = event.getSceneX() - interactionPressX;
+        double deltaY = event.getSceneY() - interactionPressY;
+        return deltaX * deltaX + deltaY * deltaY <= CLICK_DRAG_THRESHOLD * CLICK_DRAG_THRESHOLD;
+    }
+
+    private void updateGraphPaneSize(ScrollPane scrollPane) {
+        double viewportWidth = scrollPane.getViewportBounds().getWidth();
+        double viewportHeight = scrollPane.getViewportBounds().getHeight();
+
+        if (viewportWidth <= 0 || viewportHeight <= 0) {
+            return;
+        }
+
+        double width = Math.max(CANVAS_WIDTH, viewportWidth);
+        double height = Math.max(CANVAS_HEIGHT, viewportHeight);
+        graphPane.setMinSize(width, height);
+        graphPane.setPrefSize(width, height);
     }
 
     private Map<String, double[]> createRoomPositions() {
@@ -169,16 +276,39 @@ public class DungeonVisualizerApp extends Application {
     private void setInteractionMode(InteractionMode mode) {
         interactionMode = mode;
         pendingFirstRoom = null;
-        modeLabel.setText("Mode: " + mode.name());
+        updateModeToggleSelection(mode);
+        modeLabel.setText("Mode: " + getModeDisplayName(mode));
         updateModeHelpText();
         redrawGraph();
+    }
+
+    private String getModeDisplayName(InteractionMode mode) {
+        return switch (mode) {
+            case SELECT -> "Select";
+            case ADD_ROOM -> "Add Room";
+            case ADD_EDGE -> "Add Edge";
+            case DELETE_ROOM -> "Delete Room";
+            case DELETE_EDGE -> "Delete Edge";
+            case EDIT_COST -> "Edit Weight";
+        };
+    }
+
+    private void updateModeToggleSelection(InteractionMode mode) {
+        selectModeButton.setSelected(mode == InteractionMode.SELECT);
+        addRoomModeButton.setSelected(mode == InteractionMode.ADD_ROOM);
+        addEdgeModeButton.setSelected(mode == InteractionMode.ADD_EDGE);
+        deleteRoomModeButton.setSelected(mode == InteractionMode.DELETE_ROOM);
+        deleteEdgeModeButton.setSelected(mode == InteractionMode.DELETE_EDGE);
+        editCostModeButton.setSelected(mode == InteractionMode.EDIT_COST);
     }
 
     private void updateModeHelpText() {
         String help = switch (interactionMode) {
             case SELECT -> "Click rooms to choose start and target for algorithms.\n"
-                    + "First click = start, second click = target.";
-            case ADD_ROOM -> "Click on an empty area in the graph to place a new room.";
+                    + "First click = start, second click = target.\n"
+                    + "Drag on the graph background to pan the view.";
+            case ADD_ROOM -> "Click once on an empty area to place a new room.\n"
+                    + "Drag on the background to pan. Dragging will not create a room.";
             case ADD_EDGE -> "Click two rooms to connect them. You will be asked for the corridor cost.";
             case DELETE_ROOM -> "Click a room to delete it. Entrance and Exit cannot be deleted.";
             case DELETE_EDGE -> "Click two rooms to delete the corridor between them.";
@@ -451,7 +581,7 @@ public class DungeonVisualizerApp extends Application {
         outputArea.setText(
                 "Reset view.\n\n"
                         + "Algorithm highlights were cleared. The dungeon itself was not changed.\n"
-                        + "Use Reset Dungeon to restore the original demo dungeon.\n\n"
+                        + "Use Restore Demo to reset the original demo dungeon.\n\n"
                         + formatSelectionLines()
         );
     }
@@ -656,8 +786,7 @@ public class DungeonVisualizerApp extends Application {
         line.setStroke(highlighted ? HIGHLIGHT_CORRIDOR_COLOR : DEFAULT_CORRIDOR_COLOR);
         line.setStrokeWidth(highlighted ? 4 : 2);
         if (interactionMode == InteractionMode.EDIT_COST) {
-            line.setCursor(Cursor.HAND);
-            line.setOnMouseClicked(event -> handleCorridorCostClick(corridor));
+            addSimpleClickHandler(line, () -> handleCorridorCostClick(corridor));
         }
         graphPane.getChildren().add(line);
     }
@@ -675,8 +804,7 @@ public class DungeonVisualizerApp extends Application {
         costLabel.setX(midX - 6);
         costLabel.setY(midY - 6);
         if (interactionMode == InteractionMode.EDIT_COST) {
-            costLabel.setCursor(Cursor.HAND);
-            costLabel.setOnMouseClicked(event -> handleCorridorCostClick(corridor));
+            addSimpleClickHandler(costLabel, () -> handleCorridorCostClick(corridor));
         }
         graphPane.getChildren().add(costLabel);
     }
@@ -769,9 +897,19 @@ public class DungeonVisualizerApp extends Application {
     }
 
     private void addRoomClickHandler(Room room, Node node) {
+        addSimpleClickHandler(node, () -> handleRoomClick(room));
+    }
+
+    private void addSimpleClickHandler(Node node, Runnable onSimpleClick) {
+        node.setOnMousePressed(event -> {
+            event.consume();
+            recordInteractionPress(event);
+        });
         node.setOnMouseClicked(event -> {
             event.consume();
-            handleRoomClick(room);
+            if (isSimpleClick(event)) {
+                onSimpleClick.run();
+            }
         });
         node.setCursor(Cursor.HAND);
     }
@@ -786,7 +924,7 @@ public class DungeonVisualizerApp extends Application {
     private double[] getPosition(Room room) {
         double[] position = roomPositions.get(room.getName());
         if (position == null) {
-            double[] defaultPosition = {GRAPH_WIDTH / 2.0, GRAPH_HEIGHT / 2.0};
+            double[] defaultPosition = {CANVAS_WIDTH / 2.0, CANVAS_HEIGHT / 2.0};
             roomPositions.put(room.getName(), defaultPosition);
             return defaultPosition;
         }
